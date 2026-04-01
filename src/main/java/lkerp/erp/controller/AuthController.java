@@ -97,4 +97,18 @@ public class AuthController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Registration successful", response));
     }
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody AuthDTO.ForgotPasswordRequest request) {
+        Business business = businessRepository.findByName(request.getBusinessName())
+                .orElseThrow(() -> new ResourceNotFoundException("Business not found"));
+
+        User user = userRepository.findByEmailAndBusiness(request.getEmail(), business)
+                .orElseThrow(() -> new ResourceNotFoundException("No user found with the given email for this business"));
+
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        return ResponseEntity.ok(ApiResponse.success("Password reset successfully. You can now login with your new password.", null));
+    }
 }

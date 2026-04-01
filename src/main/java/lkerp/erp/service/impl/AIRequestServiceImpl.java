@@ -19,6 +19,9 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -32,6 +35,7 @@ import org.springframework.boot.json.JsonParserFactory;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AIRequestServiceImpl implements AIRequestService {
 
     private final AIRequestRepository aiRequestRepository;
@@ -46,6 +50,7 @@ public class AIRequestServiceImpl implements AIRequestService {
     private String openAiApiUrl;
     
     private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public AIRequestDTO.Response createRequest(AIRequestDTO.Request request) {
@@ -101,64 +106,77 @@ public class AIRequestServiceImpl implements AIRequestService {
                 }
             }
             
-            if ("CHAT".equals(request.getRequestType()) || "INSIGHT".equals(request.getRequestType())) {
-                StringBuilder schemaBuilder = new StringBuilder();
-                try {
-                    String schemaQuery = "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM information_schema.columns WHERE table_schema = DATABASE() AND TABLE_NAME NOT IN ('users', 'businesses', 'ai_requests')";
-                    List<Map<String, Object>> schemaResults = jdbcTemplate.queryForList(schemaQuery);
-                    Map<String, List<String>> tables = new HashMap<>();
-                    for (Map<String, Object> row : schemaResults) {
-                        String table = (String) row.get("TABLE_NAME");
-                        String col = (String) row.get("COLUMN_NAME") + " (" + row.get("DATA_TYPE") + ")";
-                        tables.computeIfAbsent(table, k -> new ArrayList<>()).add(col);
-                    }
-                    for (Map.Entry<String, List<String>> entry : tables.entrySet()) {
-                        schemaBuilder.append("Table '").append(entry.getKey()).append("':\n");
-                        for (String col : entry.getValue()) {
-                            schemaBuilder.append("  - ").append(col).append("\n");
-                        }
-                    }
-                } catch (Exception e) {
-                    schemaBuilder.append("Could not load schema.");
+            // Prepare Schema and Context
+            StringBuilder schemaBuilder = new StringBuilder();
+            try {
+                // Get the current database name for the schema query
+                String dbName = jdbcTemplate.queryForObject("SELECT DATABASE()", String.class);
+                String schemaQuery = "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM information_schema.columns " +
+                        "WHERE table_schema = ? AND TABLE_NAME NOT IN ('users', 'businesses', 'ai_requests')";
+                
+                log.info("Loading DB schema for database: {}", dbName);
+                List<Map<String, Object>> schemaResults = jdbcTemplate.queryForList(schemaQuery, dbName);
+                
+                if (schemaResults.isEmpty()) {
+                    log.warn("Database schema returned no columns for AI context!");
                 }
 
-                StringBuilder contextBuilder = new StringBuilder();
-                contextBuilder.append("You are an intelligent ERP AI Assistant acting as a Data Analyst and Content Creator for the business '").append(business.getName()).append("' (business_id=").append(business.getId()).append(").\n");
-                contextBuilder.append("You have access to a tool called 'execute_sql'. You MUST use this tool to dynamically execute SELECT queries on the MySQL database to answer questions about sales, inventory, customers, or suppliers.\n");
-                contextBuilder.append("CRITICAL INSTRUCTION: Since this is a multi-tenant database, YOU MUST ALWAYS append 'WHERE business_id = ").append(business.getId()).append("' (or join appropriately) to every query to ensure you ONLY fetch data belonging to this business!!\n");
-                contextBuilder.append("For 'EMAIL' requests (like supplier orders or customer emails), use a professional and helpful tone. If the user mentions a specific customer or supplier, you can fetch their details (like notes or address) using SQL first.\n");
-                contextBuilder.append("For 'MARKETING' requests, generate engaging and persuasive copy suitable for the specified platform.\n");
-                contextBuilder.append("Do NOT guess or hallucinate data. If you need data, execute a query.\n");
-                contextBuilder.append("Only read-only SELECT queries are allowed.\n\n");
-                contextBuilder.append("Here is the database schema:\n");
-                contextBuilder.append(schemaBuilder.toString());
-                
-                Map<String, Object> systemMsg = new HashMap<>();
-                systemMsg.put("role", "system");
-                systemMsg.put("content", contextBuilder.toString());
-                messages.add(systemMsg);
-                
-                // Define the tool
-                List<Map<String, Object>> tools = new ArrayList<>();
-                    Map<String, Object> tool = new HashMap<>();
-                    tool.put("type", "function");
-                    Map<String, Object> function = new HashMap<>();
-                    function.put("name", "execute_sql");
-                    function.put("description", "Executes a SELECT query on the MySQL database and returns the JSON result. ONLY read queries (SELECT) are allowed.");
-                    Map<String, Object> params = new HashMap<>();
-                    params.put("type", "object");
-                    Map<String, Object> props = new HashMap<>();
-                    Map<String, Object> queryProp = new HashMap<>();
-                    queryProp.put("type", "string");
-                    queryProp.put("description", "The MySQL SELECT query to execute. Example: SELECT * FROM products WHERE business_id = 1");
-                    props.put("query", queryProp);
-                    params.put("properties", props);
-                    params.put("required", List.of("query"));
-                    function.put("parameters", params);
-                    tool.put("function", function);
-                    tools.add(tool);
-                    body.put("tools", tools);
+                Map<String, List<String>> tables = new HashMap<>();
+                for (Map<String, Object> row : schemaResults) {
+                    String table = (String) row.get("TABLE_NAME");
+                    String col = (String) row.get("COLUMN_NAME") + " (" + row.get("DATA_TYPE") + ")";
+                    tables.computeIfAbsent(table, k -> new ArrayList<>()).add(col);
                 }
+                for (Map.Entry<String, List<String>> entry : tables.entrySet()) {
+                    schemaBuilder.append("Table '").append(entry.getKey()).append("':\n");
+                    for (String col : entry.getValue()) {
+                        schemaBuilder.append("  - ").append(col).append("\n");
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Failed to load DB schema: {}", e.getMessage());
+                schemaBuilder.append("Note: Database schema could not be fully loaded. Focus on products, invoices, customers, and suppliers tables.");
+            }
+
+            StringBuilder contextBuilder = new StringBuilder();
+            contextBuilder.append("You are an intelligent ERP AI Assistant for '").append(business.getName()).append("' (ID=").append(business.getId()).append(").\n\n");
+            
+            contextBuilder.append("CORE RULES:\n");
+            contextBuilder.append("1. ALWAYS use the 'execute_sql' tool for ANY question about sales, trends, quantities, or specific records. DO NOT guess or rely on generic data.\n");
+            contextBuilder.append("2. MULTI-TENANCY: You MUST include 'WHERE business_id = ").append(business.getId()).append("' in every SQL query you generate. Failure to do so will return incorrect data.\n");
+            contextBuilder.append("3. DATA LIMITS: Only SELECT queries are permitted. Use LIMIT to keep results manageable (e.g., top 10).\n");
+            contextBuilder.append("4. RESPONSE TONE: Professional, analytical, and data-driven for Insights; helpful and clear for Emails and Marketing.\n\n");
+            
+            contextBuilder.append("DATABASE SCHEMA:\n");
+            contextBuilder.append(schemaBuilder.length() > 0 ? schemaBuilder.toString() : "Schema information unavailable.");
+            
+            Map<String, Object> systemMsg = new HashMap<>();
+            systemMsg.put("role", "system");
+            systemMsg.put("content", contextBuilder.toString());
+            messages.add(systemMsg);
+
+            // Tools are only active for CHAT and INSIGHT types
+            if ("CHAT".equals(request.getRequestType()) || "INSIGHT".equals(request.getRequestType())) {
+                List<Map<String, Object>> tools = new ArrayList<>();
+                Map<String, Object> tool = new HashMap<>();
+                tool.put("type", "function");
+                Map<String, Object> function = new HashMap<>();
+                function.put("name", "execute_sql");
+                function.put("description", "Executies a SQL SELECT query to retrieve live business data. You MUST append 'WHERE business_id = " + business.getId() + "' to your queries.");
+                Map<String, Object> params = new HashMap<>();
+                params.put("type", "object");
+                Map<String, Object> props = new HashMap<>();
+                Map<String, Object> queryProp = new HashMap<>();
+                queryProp.put("type", "string");
+                queryProp.put("description", "The MySQL SELECT query. MUST include 'WHERE business_id = " + business.getId() + "'.");
+                props.put("query", queryProp);
+                params.put("properties", props);
+                params.put("required", List.of("query"));
+                function.put("parameters", params);
+                tool.put("function", function);
+                tools.add(tool);
+                body.put("tools", tools);
+            }
                 
                 Map<String, Object> message = new HashMap<>();
                 message.put("role", "user");
@@ -198,11 +216,15 @@ public class AIRequestServiceImpl implements AIRequestService {
                                         
                                         if (sqlQuery == null || !sqlQuery.trim().toUpperCase().startsWith("SELECT")) {
                                             toolResult = "{\"error\": \"Only SELECT queries are allowed for security reasons.\"}";
+                                            log.warn("AI denied unauthorized query: {}", sqlQuery);
                                         } else {
+                                            log.info("AI executing SQL: {}", sqlQuery);
                                             List<Map<String, Object>> queryResults = jdbcTemplate.queryForList(sqlQuery);
-                                            toolResult = queryResults.toString();
+                                            toolResult = objectMapper.writeValueAsString(queryResults);
+                                            log.info("SQL Result size: {}", queryResults.size());
                                         }
                                     } catch (Exception e) {
+                                        log.error("AI SQL execution error: {}", e.getMessage());
                                         toolResult = "{\"error\": \"" + e.getMessage() + "\"}";
                                     }
                                 }

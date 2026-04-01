@@ -53,8 +53,7 @@ public class SupplierServiceImpl implements SupplierService {
 
     @Override
     public List<SupplierDTO.Response> getSuppliersByBusiness(Long businessId) {
-        return supplierRepository.findAll().stream()
-                .filter(s -> s.getBusiness().getId().equals(businessId))
+        return supplierRepository.findByBusinessId(businessId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }

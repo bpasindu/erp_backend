@@ -85,8 +85,7 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public List<ProductDTO.Response> getProductsByBusiness(Long businessId) {
-        return productRepository.findAll().stream()
-                .filter(p -> p.getBusiness().getId().equals(businessId))
+        return productRepository.findByBusinessId(businessId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }

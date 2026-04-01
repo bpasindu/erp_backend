@@ -53,8 +53,7 @@ public class CustomerServiceImpl implements CustomerService {
 
     @Override
     public List<CustomerDTO.Response> getCustomersByBusiness(Long businessId) {
-        return customerRepository.findAll().stream()
-                .filter(c -> c.getBusiness().getId().equals(businessId))
+        return customerRepository.findByBusinessId(businessId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }

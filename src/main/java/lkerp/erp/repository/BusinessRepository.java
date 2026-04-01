@@ -9,4 +9,5 @@ import java.time.LocalDateTime;
 public interface BusinessRepository extends JpaRepository<Business, Long> {
     long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
     long countByStatusAndPlanNot(String status, String plan);
+    java.util.Optional<Business> findByName(String name);
 }

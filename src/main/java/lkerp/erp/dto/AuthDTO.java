@@ -51,4 +51,20 @@ public class AuthDTO {
         private String role;
         private Long businessId;
     }
+    
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class ForgotPasswordRequest {
+        @NotBlank(message = "Business name is required")
+        private String businessName;
+
+        @NotBlank(message = "Email is required")
+        @Email(message = "Must be a valid email")
+        private String email;
+
+        @NotBlank(message = "New password is required")
+        private String newPassword;
+    }
 }

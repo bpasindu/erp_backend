@@ -107,8 +107,7 @@ public class InvoiceServiceImpl implements InvoiceService {
 
     @Override
     public List<InvoiceDTO.Response> getInvoicesByBusiness(Long businessId) {
-        return invoiceRepository.findAll().stream()
-                .filter(i -> i.getBusiness().getId().equals(businessId))
+        return invoiceRepository.findByBusinessId(businessId).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
