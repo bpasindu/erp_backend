@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDateTime;
 import java.util.List;
 
-@CrossOrigin(origins = { "http://localhost:5173", "http://127.0.0.1:5173" }, maxAge = 3600, allowCredentials = "true")
+@CrossOrigin(origins = "*", maxAge = 3600, allowCredentials = "false")
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor

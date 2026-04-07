@@ -1,0 +1,21 @@
+[Unit]
+Description=SmartBiz ERP Backend Service
+After=network.target mysql.service
+
+[Service]
+User=ubuntu
+# Set the OpenAI API Key and other production environment variables here
+Environment="OPENAI_API_KEY=YOUR_OPENAI_API_KEY_HERE"
+Environment="SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/erp_db"
+Environment="SPRING_DATASOURCE_USERNAME=erp_user"
+Environment="SPRING_DATASOURCE_PASSWORD=YOUR_DB_PASSWORD_HERE"
+Environment="SPRING_PROFILES_ACTIVE=prod"
+
+WorkingDirectory=/home/ubuntu/erp
+ExecStart=/usr/bin/java -jar erp-0.0.1-SNAPSHOT.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
